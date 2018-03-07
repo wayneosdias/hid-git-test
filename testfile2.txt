@@ -1,0 +1,174 @@
+/* ========================================
+ * Example of UART communication with PSoC using hyperterminal 
+ * send control commands to change PWM duty cycle for 8 PWMs
+ *
+ * example of valid commands (each dollowed by either LF, CR or both):
+ * 'A127' - set channel A to half of max value
+ * 'B0'   - set channel B to zero
+ * 'X'    - set all channels to maX value (255)
+ * 'Z'    - set ll channels to Zero (0)
+ *
+ * ========================================
+*/
+#include "project.h"
+#include <string.h>
+#include <stdlib.h> //atoi
+#include <stdio.h>  //spintf
+#include <myUART.h> //UART communication
+
+
+char strMsg1[64]; //output UART buffer
+
+
+//buffer to hold application settings
+typedef struct TParamBuffer{
+    uint16 R, G, B; //compare settings for PWM_R, PWM_G, PWM_B
+} ParamBuffer; //settings
+volatile ParamBuffer PB;     
+
+// each control command has a structure defined by TRxBuffer in myUART.h:
+// CMD (1byte) | value_string (up to 19 bytes long) | separator (\r\n)
+// example of valid commands (each dollowed by either LF, CR or both):
+// 'R255' - set channel A to max value
+// 'G0'   - set channel G to zero
+// 'X'    - set all channels to max value
+// 'Z'    - set all channels to Zero
+
+    
+//define input commands-> 
+#define cmd_R  'R' //set value for PWM_R
+#define cmd_G  'G' //set value for PWM_G
+#define cmd_B  'B' //set value for PWM_B
+    
+#define cmd_X  'X' //set all PWMs to MaxVal
+#define cmd_Z  'Z' //set all PWMs to Zero   
+
+const uint16 MaxVal = 255; // max PWM value
+
+
+
+
+//=======================================
+//         Forward declarations  
+//=======================================
+void ProcessCommandMsg(void);      // Process received command (do something...)
+void RefreshPWM(void);             // refresh all PWM values
+int  isNumeric(const char * s);    // check if string is a number
+
+
+
+void Initialize(void)
+{
+	CyGlobalIntEnable;
+    
+	Rx_Int_StartEx(MyRxInt);//start Rx interrupt
+    	
+	UART_Start();
+    UART_UartPutString("\r\nPWM + UART example\r\n");
+    UART_UartPutString("type a command, e.g. R255 >\r\n");    
+   
+     
+    PWM_R_Start(); PWM_G_Start(); PWM_B_Start();
+    PB.R = PB.G = PB.B = 0; 
+    RefreshPWM();
+    
+}
+
+int main()
+{   
+    Initialize();
+    
+	for(;;) //forever 
+	{   
+        
+        if(IsCharReady()) //Rx buffer not empty
+        {
+            if (GetRxStr())   //extract first command message (non-blocking)
+            {
+                ProcessCommandMsg(); 
+            }
+        }               
+		      
+        
+    }
+}
+
+
+//===========================================================================
+// Process UART Receive Buffer content: RB.RxStr = RB.cms + RB.valstr
+// 
+//===========================================================================
+
+void ProcessCommandMsg(void)
+{    
+    // check received message for any valid command and execute it if necessary or report old value
+    // if command not recognized, then report error (!)
+    // todo: current version does not check for valid input range
+
+    
+    if  (RB.cmd == cmd_R)//command 'R' received..
+    {
+        if (isNumeric(RB.valstr)) PB.R = atoi(RB.valstr);//if valid number set new value
+        sprintf(strMsg1,"R=%d\r\n", PB.R); UART_UartPutString(strMsg1);//echo new value
+        PWM_R_WriteCompare(PB.R); //update settings
+    }
+    else if (RB.cmd == cmd_G)//command 'G' received..
+    {
+        if (isNumeric(RB.valstr)) PB.G = atoi(RB.valstr);//if valid number set new value, else report old 
+        sprintf(strMsg1,"G=%d\r\n", PB.G); UART_UartPutString(strMsg1);//echo command and value
+        PWM_G_WriteCompare(PB.G);
+    }
+    else if (RB.cmd == cmd_B)//command 'B' received..
+    {
+        if (strlen(RB.valstr) > 0) PB.B = atoi(RB.valstr);//set new value, else report old 
+        sprintf(strMsg1,"B=%d\r\n", PB.B); UART_UartPutString(strMsg1);//echo command and value
+        PWM_B_WriteCompare(PB.B);
+    }
+    else if (RB.cmd == cmd_X)//command 'X' received..
+    {
+        sprintf(strMsg1,"X%s\r\n", RB.valstr); UART_UartPutString(strMsg1);//echo command and value
+        PB.R = PB.G = PB.B = MaxVal;
+        RefreshPWM(); // set all to max value
+    }
+    else if (RB.cmd == cmd_Z)//command 'Z' received..
+    {
+        sprintf(strMsg1,"Z%s\r\n", RB.valstr); UART_UartPutString(strMsg1);//echo command and value
+        PB.R = PB.G = PB.B = 0;
+        RefreshPWM(); // turn off all 
+    }
+    else //command unrecognized - echo unrecognized command
+    {
+        sprintf(strMsg1,"!%s\r\n", RB.RxStr); UART_UartPutString(strMsg1);
+    }
+  
+}
+
+//===========================================================================
+// Update all PWMs values
+//===========================================================================
+
+void RefreshPWM()
+{
+    PWM_R_WriteCompare(PB.R);
+    PWM_G_WriteCompare(PB.G);
+    PWM_B_WriteCompare(PB.B);
+}
+
+//===========================================================================
+// Check that string represents a number
+// function does not checksa bounds, and input string must be trimmed
+//
+// URL: 
+// http://rosettacode.org/wiki/Determine_if_a_string_is_numeric#C
+//===========================================================================
+// todo: check input range
+int isNumeric (const char * s)
+{
+    if (s == NULL || *s == '\0' || isspace(*s))
+      return 0;
+    char * p;
+    strtod (s, &p);
+    return *p == '\0';
+}
+
+/* [] END OF FILE */
